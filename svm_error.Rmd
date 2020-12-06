@@ -1,0 +1,512 @@
+# SVM Clssifier
+
+Inés Broto Clemente i Arnau Turch Ferreres
+
+```{r}
+library(rAMPL)
+```
+
+Primer de tot definim un enviorment AMPL en R per tal de poder executarr directament des d'aquest programa AMPL. (Canviar path al path on està guardada la carpeta AMPL)
+
+```{r}
+path="/home/ines-broto/Documentos/2n/2nquatri/om/AMPL/ampl_linux-intel64"
+env <- new(Environment, path)
+ampl <- new(AMPL, env)
+eps <- 1e-6
+```
+
+## Classificació amb dades linealment separables
+
+### Problema Primal
+
+***Variables i optimització***
+
+```{r}
+ampl$reset()
+ampl$read("./models/svmprimal.mod")
+ampl$readData("./dades/trainP.dat")
+ampl$solve()
+w <- ampl$getVariable("w")
+w <- w$getValues()
+W=as.matrix(w[,-1])
+
+s <- ampl$getVariable("s")
+s <- s$getValues()
+S=as.matrix(s[,-1])
+
+gamma <- ampl$getVariable("gamma")
+gamma <- gamma$getValues()
+gamma= gamma[1,1]
+
+m <- ampl$getParameter("m")
+m <- m$getValues()
+num_points <- m[1,1]
+
+n <- ampl$getParameter("n")
+n <- n$getValues()
+dim <- n[1,1]
+
+nu <- ampl$getParameter("nu")
+nu <- nu$getValues()
+nu=nu[1,1]
+
+y <- ampl$getParameter("y")
+y <- y$getValues()
+y=as.matrix(y[,-1])
+
+A <- ampl$getParameter("A")
+A <- A$getValues()
+A <- xtabs(A~index0+index1, A)
+A=as.matrix(A)
+```
+
+***Funció per calcular l'error del SVM primal***
+
+```{r}
+mod.accP = function(points, class)
+{
+  est=c()
+  est[points%*%W+as.matrix(rep(gamma,dim(points)[1]))>=0]=1
+  est[points%*%W+as.matrix(rep(gamma,dim(points)[1]))<=0]=-1
+  
+  table = table(Truth=class,Pred=est)
+  error = 100*(1-sum(diag(table))/sum(table))
+  
+  print(table)
+  print(error)
+}
+```
+
+***Training Error del problema primal***
+
+```{r}
+train_points = A
+train_class=y
+mod.accP(train_points,train_class)
+```
+
+
+***Test Error del problema primal***
+
+```{r}
+test_points = read.table("./dades/testP.dat")
+test_class=as.vector(test_points[,5])
+test_points=as.matrix(test_points[,-5])
+
+mod.accP(test_points,test_class)
+```
+
+### Problema Dual
+
+***Variables***
+
+```{r}
+ampl$reset()
+ampl$read("./models/svmdual.mod")
+ampl$readData("./dades/trainD.dat")
+ampl$solve()
+
+m <- ampl$getParameter("m")
+m <- m$getValues()
+num_points <- m[1,1]
+
+nu <- ampl$getParameter("nu")
+nu <- nu$getValues()
+nu=nu[1,1]
+
+lambda <- ampl$getVariable("lambda")
+lambda <- lambda$getValues()
+lambda=as.matrix(lambda[,-1])
+
+
+K <- ampl$getParameter("K")
+K <- K$getValues()
+K <- xtabs(K~index0+index1, K)
+```
+
+***Funció per calcular l'error del SVM primal***
+
+(recuperar wd i la gamma abans)
+
+```{r}
+mod.accD = function(points, class)
+{
+  estD=c()
+  estD[points%*%Wd+as.matrix(rep(gammad,dim(points)[1]))>=0]=1
+  estD[points%*%Wd+as.matrix(rep(gammad,dim(points)[1]))<=0]=-1
+  
+  print(table <- table(Truth=class,Pred=estD))
+  print(100*(1-sum(diag(table))/sum(table)))
+}
+```
+
+***Recuperem W i gamma i caluclem l'error de training del SVM resolent el problema dual***
+
+```{r}
+#triem un punt que sigui vector de suport(lambda>0)
+for(i in 1:300){
+  if(lambda[i]>eps && lambda[i]<nu-eps){
+    ref=i;
+    break;
+  }
+}
+
+gammaK=1/train_class[ref]-t(lambda*train_class)%*%K[ref,]
+
+estT_dual_kernel=c()
+estT_dual_kernel[t(lambda*train_class)%*%K+t(as.matrix(rep(gammaK,dim(train_points)[1])))>=0]=1
+estT_dual_kernel[t(lambda*train_class)%*%K+t(as.matrix(rep(gammaK,dim(train_points)[1])))<=0]=-1
+
+print(tableT_dual_kernel <- table(Truth=train_class,Pred=estT_dual_kernel))
+print(100*(1-sum(diag(tableT_dual_kernel))/sum(tableT_dual_kernel)))
+```
+
+
+***Test error del SVM resolent el problema dual***
+
+```{r}
+train_points = A
+train_class = y
+test_points = read.table("./dades/testP.dat")
+test_class=as.vector(test_points[,5])
+test_points=as.matrix(test_points[,-5])
+
+#triem un punt que sigui vector de suport(lambda>0)
+for(i in 1:300){
+  if(lambda[i]>eps && lambda[i]<nu-eps){
+    ref=i;
+    break;
+  }
+}
+
+Kgamma = train_points[ref,]%*%t(train_points)
+
+gamma = 1/train_class[ref] - t(lambda*train_class)%*%t(Kgamma)
+
+Kphiw = train_points%*%t(test_points)
+phiw = t(lambda*train_class)%*%Kphiw
+
+estTest_dual_kernel=c()
+estTest_dual_kernel[phiw+rep(gamma,dim(test_points)[1])>=0]=1
+estTest_dual_kernel[phiw+rep(gamma,dim(test_points)[1])<=0]=-1
+
+print(tableTest_dual_kernel <- table(Truth=test_class,Pred=estTest_dual_kernel))
+print(100*(1-sum(diag(tableTest_dual_kernel))/sum(tableTest_dual_kernel)))
+```
+
+### Comparació resolució problema dual i primal
+
+***Recuperem la W i la $gamma$ a partir del dual***
+
+```{r}
+train_points = read.table("./dades/dadesP.dat")
+train_class = as.vector(train_points[,5])
+train_points = as.matrix(train_points[,-5])
+
+Yd=diag(train_class,300,300)
+Wd=t(train_points)%*%t(Yd)%*%lambda
+  
+for(i in 1:300){
+  if(lambda[i]>0 && lambda[i]<nu){
+  ref=i;
+  break;
+  }
+}
+  
+gammad=1/train_class[ref]-t(Wd)%*%train_points[ref,]
+```
+
+```{r}
+(Wd)
+(W)
+(gammad)
+(gamma)
+```
+
+Observem que el pla de separació coincideix.
+
+# Wine dataset
+
+***Càrrega de dades del problema Primal i solució*** 
+
+```{r}
+ampl$reset()
+ampl$read("./models/svmprimal.mod")
+ampl$readData("./dades/wine_1.data")
+ampl$solve()
+w <- ampl$getVariable("w")
+w <- w$getValues()
+W=as.matrix(w[,-1])
+
+s <- ampl$getVariable("s")
+s <- s$getValues()
+S=as.matrix(s[,-1])
+
+gamma <- ampl$getVariable("gamma")
+gamma <- gamma$getValues()
+gamma= gamma[1,1]
+
+m <- ampl$getParameter("m")
+m <- m$getValues()
+num_points <- m[1,1]
+
+n <- ampl$getParameter("n")
+n <- n$getValues()
+dim <- n[1,1]
+
+nu <- ampl$getParameter("nu")
+nu <- nu$getValues()
+nu=nu[1,1]
+
+y <- ampl$getParameter("y")
+y <- y$getValues()
+y=as.matrix(y[,-1])
+
+A <- ampl$getParameter("A")
+A <- A$getValues()
+A <- xtabs(A~index0+index1, A)
+A=as.matrix(A)
+```
+
+***Càlcul de l'error de test del SVM resolent el problema Primal***
+
+```{r}
+train_points = A
+train_class=y
+mod.accP(train_points,train_class)
+```
+
+
+***Càrrega de dades del problema Dual i solució*** 
+
+```{r}
+ampl$reset()
+ampl$read("./models/svmdual.mod")
+ampl$readData("./dades/wineD.dat")
+ampl$solve()
+
+m <- ampl$getParameter("m")
+m <- m$getValues()
+num_points <- m[1,1]
+
+nu <- ampl$getParameter("nu")
+nu <- nu$getValues()
+nu=nu[1,1]
+
+lambda <- ampl$getVariable("lambda")
+lambda <- lambda$getValues()
+lambda=as.matrix(lambda[,-1])
+
+
+K <- ampl$getParameter("K")
+K <- K$getValues()
+K <- xtabs(K~index0+index1, K)
+```
+
+***Càlcul de l'error de test del SVM resolent el problema dual***
+
+```{r}
+#triem un punt que sigue vector de suport(lambda>0)
+for(i in 1:length(lambda)){
+  if(lambda[i]>0 && lambda[i]<nu){
+    ref=i;
+    break;
+  }
+}
+
+gammaK=1/train_class[ref]-t(lambda*train_class)%*%K[ref,]
+
+estT_dual_kernel=c()
+
+estT_dual_kernel[t(lambda*train_class)%*%K+t(as.matrix(rep(gammaK,130)))>=eps]=1
+estT_dual_kernel[t(lambda*train_class)%*%K+t(as.matrix(rep(gammaK,130)))<=eps]=-1
+
+
+print(tableT_dual_kernel <- table(Truth=train_class,Pred=estT_dual_kernel))
+print(100*(1-sum(diag(tableT_dual_kernel))/sum(tableT_dual_kernel)))
+```
+
+***Recueprem les W i la $gamma$***
+```{r}
+train_points = read.csv("./dades/wine.data", header = FALSE)
+train_class = as.vector(train_points[,1])
+train_points = as.matrix(train_points[,-1])
+  
+Yd=diag(train_class,length(train_class),length(train_class))
+Wd=t(train_points)%*%t(Yd)%*%lambda
+  
+for(i in 1:length(train_class)){
+  if(lambda[i]>0 && lambda[i]<nu){
+  ref=i;
+  break;
+  }
+}
+  
+gammad=1/train_class[ref]-t(Wd)%*%train_points[ref,]
+```
+
+### Comparació resolució problema dual i primal
+
+```{r}
+(Wd)
+(W)
+(gammad)
+(gamma)
+```
+
+Igual que abans, tenim el mateix pla de separació.
+
+
+# SVM amb dades no linealment separables
+
+## Problema Primal
+
+```{r}
+ampl$reset()
+ampl$read("./models/svmprimal.mod")
+ampl$readData("./dades/trainswissP.dat")
+ampl$solve()
+w <- ampl$getVariable("w")
+w <- w$getValues()
+W=as.matrix(w[,-1])
+
+s <- ampl$getVariable("s")
+s <- s$getValues()
+S=as.matrix(s[,-1])
+
+gamma <- ampl$getVariable("gamma")
+gamma <- gamma$getValues()
+gamma= gamma[1,1]
+
+m <- ampl$getParameter("m")
+m <- m$getValues()
+num_points <- m[1,1]
+
+n <- ampl$getParameter("n")
+n <- n$getValues()
+dim <- n[1,1]
+
+nu <- ampl$getParameter("nu")
+nu <- nu$getValues()
+nu=nu[1,1]
+
+y <- ampl$getParameter("y")
+y <- y$getValues()
+y=as.matrix(y[,-1])
+
+A <- ampl$getParameter("A")
+A <- A$getValues()
+A <- xtabs(A~index0+index1, A)
+A=as.matrix(A)
+```
+
+***Error de training del problema primal***
+
+```{r}
+train_points = A
+train_class= y
+
+mod.accP(train_points,train_class)
+```
+
+***Error de test del problema primal***
+
+```{r}
+test_points = read.table("./dades/testswissP.dat")
+test_class=as.vector(test_points[,4])
+test_points=as.matrix(test_points[,-4])
+
+mod.accP(test_points,test_class)
+```
+
+## Problema Dual
+
+```{r}
+ampl$reset()
+ampl$read("./models/svmdual.mod")
+ampl$readData("./dades/trainswissD.dat")
+ampl$solve()
+
+m <- ampl$getParameter("m")
+m <- m$getValues()
+num_points <- m[1,1]
+
+nu <- ampl$getParameter("nu")
+nu <- nu$getValues()
+nu=nu[1,1]
+
+lambda <- ampl$getVariable("lambda")
+lambda <- lambda$getValues()
+lambda=as.matrix(lambda[,-1])
+
+
+K <- ampl$getParameter("K")
+K <- K$getValues()
+K <- xtabs(K~index0+index1, K)
+```
+
+
+
+***Error de training del problema dual***
+
+
+```{r}
+#triem un punt que sigue vector de suport(lambda>0)
+for(i in 1:300){
+  if(lambda[i]>0 && lambda[i]<nu){
+    ref=i;
+    break;
+  }
+}
+
+gammaK=1/train_class[ref]-t(lambda*train_class)%*%K[ref,]
+
+estT_dual_kernel=c()
+estT_dual_kernel[t(lambda*train_class)%*%K+t(as.matrix(rep(gammaK,300)))>=0]=1
+estT_dual_kernel[t(lambda*train_class)%*%K+t(as.matrix(rep(gammaK,300)))<=0]=-1
+
+print(tableT_dual_kernel <- table(Truth=train_class,Pred=estT_dual_kernel))
+print(100*(1-sum(diag(tableT_dual_kernel))/sum(tableT_dual_kernel)))
+```
+
+***Error de test del problema dual***
+
+```{r}
+train_points = A
+train_class = y
+test_points = read.table("./dades/testswissP.dat")
+test_class=as.vector(test_points[,4])
+test_points=as.matrix(test_points[,-4])
+
+#triem un punt que sigui vector de suport(lambda>0)
+for(i in 1:length(lambda)){
+  if(lambda[i]>eps && lambda[i]<nu-eps){
+    ref=i;
+    break;
+  }
+}
+s=mean(apply(train_points,2,var))
+Atraux= as.vector(rep(1,300))%*%t(as.vector(train_points[ref,]))
+Kgamma = exp(-((Atraux-train_points)%*%t(Atraux-train_points))/(2*s))
+
+gamma = 1/train_class[ref] - t(lambda*train_class)%*%Kgamma[ref,]
+
+
+Kphiw=matrix(1, nrow = 300, ncol = 200)
+for(i in 1:dim(train_points)[1]){
+  for(j in 1:dim(test_points)[1]){
+    Kphiw[i,j]=exp(-(t(test_points[j,]-train_points[i,])%*%(test_points[j,]-train_points[i,]))/(2*s))
+  }
+}
+
+
+
+phiw = t(lambda*train_class)%*%Kphiw
+
+estTest_dual_kernel=c()
+estTest_dual_kernel[phiw+rep(gamma,dim(test_points)[1])>=0]=1
+estTest_dual_kernel[phiw+rep(gamma,dim(test_points)[1])<=0]=-1
+
+print(tableTest_dual_kernel <- table(Truth=test_class,Pred=estTest_dual_kernel))
+print(100*(1-sum(diag(tableTest_dual_kernel))/sum(tableTest_dual_kernel)))
+```
